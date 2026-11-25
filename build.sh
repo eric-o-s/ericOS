@@ -38,13 +38,17 @@ if [[ ! -f "$UF2" ]]; then
 fi
 
 echo
-echo "==> UF2: $UF2 ($(stat -c%s "$UF2") bytes)"
+# wc -c works on both GNU (Linux) and BSD (macOS); stat flags differ between them.
+echo "==> UF2: $UF2 ($(wc -c < "$UF2" | tr -d ' ') bytes)"
 python3 "$HERE/verify_uf2.py" "$UF2"
 
 if [[ "${1:-}" == "--deploy" ]]; then
   TARGET="${RPI_RP2:-}"
   if [[ -z "$TARGET" ]]; then
-    TARGET="$(find /run/media /media "$HOME" -maxdepth 3 -type d -name 'RPI-RP2*' 2>/dev/null | head -1 || true)"
+    # The RP2350 boot ROM mounts as "RP2350"; older boards use "RPI-RP2".
+    # macOS mounts drives under /Volumes, Linux under /run/media or /media.
+    TARGET="$(find /Volumes /run/media /media -maxdepth 3 -type d \
+      \( -name 'RP2350*' -o -name 'RPI-RP2*' \) 2>/dev/null | head -1 || true)"
   fi
   if [[ -z "$TARGET" || ! -d "$TARGET" ]]; then
     echo "!! Board drive not found. Enter BOOTSEL mode," >&2
