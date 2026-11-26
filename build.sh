@@ -30,8 +30,8 @@ arduino-cli "${ARGS[@]}" \
   --output-dir "$BUILD_DIR" \
   "$SKETCH"
 
-UF2="$BUILD_DIR/ericOS.ino.uf2"
-[[ -f "$UF2" ]] || UF2="$BUILD_DIR/ericOS.uf2"
+UF2="$BUILD_DIR/EricOS.ino.uf2"
+[[ -f "$UF2" ]] || UF2="$BUILD_DIR/EricOS.uf2"
 if [[ ! -f "$UF2" ]]; then
   echo "!! No UF2 produced" >&2
   exit 1
