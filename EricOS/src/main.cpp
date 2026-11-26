@@ -165,6 +165,8 @@ void ditherGradientRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t dar
 void drawTopBar(const char *title, const char *subtitle);
 void drawWirelessStatusIcon();
 void serviceWirelessStatusIcon();
+void drawStorageStatusIcon();
+void serviceStorageStatus();
 void drawFooter(const char *value);
 void drawBootScreen();
 void drawHomeTile(HomeTile tile, int16_t x, int16_t y, int16_t w, int16_t h, const char *icon, const char *name, const char *detail, const char *detailLine2, bool focused);
@@ -641,6 +643,44 @@ void serviceWirelessStatusIcon() {
   drawWirelessStatusIcon();
 }
 
+// SD card silhouette left of the Wi-Fi bars: filled when a card is mounted,
+// dim outline when the slot is empty or the card failed to mount.
+void drawStorageStatusIcon() {
+  constexpr int16_t X = 272;
+  constexpr int16_t Y = 6;
+  constexpr int16_t W = 9;
+  constexpr int16_t H = 12;
+  constexpr int16_t NOTCH = 3;
+  constexpr int16_t RIGHT = X + W - 1;
+  constexpr int16_t BOTTOM = Y + H - 1;
+  display.fillRect(X - 1, 2, W + 2, 18, COLOR_BLACK);
+  if (sdReady) {
+    display.fillRect(X, Y, W - NOTCH, H, COLOR_ACCENT);
+    display.fillRect(RIGHT - NOTCH + 1, Y + NOTCH, NOTCH, H - NOTCH, COLOR_ACCENT);
+    display.fillTriangle(RIGHT - NOTCH, Y, RIGHT, Y + NOTCH, RIGHT - NOTCH, Y + NOTCH, COLOR_ACCENT);
+    for (uint8_t i = 0; i < 3; ++i) display.drawFastVLine(X + 2 + i * 2, Y + 2, 3, COLOR_BLACK);
+  } else {
+    display.drawFastHLine(X, Y, W - NOTCH, COLOR_ACCENT_DARK);
+    display.drawLine(RIGHT - NOTCH, Y, RIGHT, Y + NOTCH, COLOR_ACCENT_DARK);
+    display.drawFastVLine(RIGHT, Y + NOTCH, H - NOTCH, COLOR_ACCENT_DARK);
+    display.drawFastHLine(X, BOTTOM, W, COLOR_ACCENT_DARK);
+    display.drawFastVLine(X, Y, H, COLOR_ACCENT_DARK);
+  }
+}
+
+void serviceStorageStatus() {
+  if (!EricStorage::serviceCardDetect()) return;
+  sdReady = EricStorage::isReady();
+  drawStorageStatusIcon();
+  // A listing from the old card (or "NO SD CARD") is stale now; start again at the root.
+  if (activeApp == AppId::Explorer && explorerMode == ExplorerMode::Browse) {
+    strncpy(explorerPath, "/", sizeof(explorerPath));
+    explorerOffset = 0;
+    refreshExplorer();
+    drawExplorer();
+  }
+}
+
 
 
 void drawTopBar(const char *title, const char *subtitle) {
@@ -653,6 +693,7 @@ void drawTopBar(const char *title, const char *subtitle) {
     text(COLOR_MUTED, 1, HEADER_SUBTITLE_X, HEADER_SUBTITLE_Y, subtitle);
   }
   drawWirelessStatusIcon();
+  drawStorageStatusIcon();
 }
 
 void drawFooter(const char *value) {
@@ -4564,8 +4605,11 @@ void loop() {
       updateTransferStatusLines();
     }
   }
+  // The Game Boy streams its ROM from the card, so the card is never remounted
+  // while that app is open; a change is picked up on the way out.
   if (activeApp != AppId::GameBoy) {
     serviceWirelessStatusIcon();
+    serviceStorageStatus();
   }
   
   

@@ -6,6 +6,26 @@
 
 namespace {
 bool cardReady = false;
+
+// Card-detect debounce. The socket switch chatters while a card slides in, so the
+// pin must hold one level for DetectSettleMs before the card is mounted or dropped.
+constexpr uint32_t DetectPollMs = 100;
+constexpr uint32_t DetectSettleMs = 500;
+bool pinPresent = false;      // last raw reading of the detect pin
+bool actedPresent = false;    // pin level the mount state was last updated for
+uint32_t pinChangedAt = 0;
+uint32_t lastPollAt = 0;
+
+bool readDetectPin() {
+  return digitalRead(EricConfig::SdDetect) == LOW;
+}
+
+bool mountCard() {
+  // end(false) clears SDFS's mounted flag without stopping the shared SPI bus, so
+  // begin() mounts the newly inserted card instead of returning the stale mount.
+  SD.end(false);
+  return SD.begin(EricConfig::SdCs, SPI);
+}
 }
 
 namespace EricStorage {
@@ -16,8 +36,36 @@ bool begin() {
   SPI.setSCK(EricConfig::SdSck);
   SPI.begin();
   
-  cardReady = (digitalRead(EricConfig::SdDetect) == LOW) && SD.begin(EricConfig::SdCs, SPI);
+  pinPresent = actedPresent = readDetectPin();
+  pinChangedAt = lastPollAt = millis();
+  cardReady = pinPresent && SD.begin(EricConfig::SdCs, SPI);
   return cardReady;
+}
+
+bool serviceCardDetect() {
+  const uint32_t now = millis();
+  if (now - lastPollAt < DetectPollMs) return false;
+  lastPollAt = now;
+
+  const bool present = readDetectPin();
+  if (present != pinPresent) {
+    pinPresent = present;
+    pinChangedAt = now;
+    return false;
+  }
+  if (present == actedPresent || now - pinChangedAt < DetectSettleMs) return false;
+
+  // Act once per settled change, so a card that fails to mount is not retried on
+  // every poll; re-inserting it tries again.
+  actedPresent = present;
+  const bool wasReady = cardReady;
+  if (present) {
+    cardReady = mountCard();
+  } else {
+    cardReady = false;
+    SD.end(false);
+  }
+  return cardReady != wasReady;
 }
 
 bool isReady() {
