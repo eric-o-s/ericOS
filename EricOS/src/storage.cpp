@@ -16,6 +16,14 @@ bool actedPresent = false;    // pin level the mount state was last updated for
 uint32_t pinChangedAt = 0;
 uint32_t lastPollAt = 0;
 
+// A card that is present but did not mount (most often at power-on, when it is
+// powered up at the same moment as the Pico and is not ready for the first try)
+// is retried once a second for a while after boot or insertion.
+constexpr uint32_t RemountPeriodMs = 1000;
+constexpr uint8_t RemountAttempts = 10;
+uint8_t remountsLeft = 0;
+uint32_t lastMountAttemptAt = 0;
+
 bool readDetectPin() {
   return digitalRead(EricConfig::SdDetect) == LOW;
 }
@@ -36,9 +44,25 @@ bool begin() {
   SPI.setSCK(EricConfig::SdSck);
   SPI.begin();
   
+  // Let the detect pin's pull-up settle before trusting it.
+  delay(2);
   pinPresent = actedPresent = readDetectPin();
-  pinChangedAt = lastPollAt = millis();
-  cardReady = pinPresent && SD.begin(EricConfig::SdCs, SPI);
+  cardReady = false;
+  if (pinPresent) {
+    // Settings, notes and Wi-Fi details are read from the card right after this,
+    // so give a card that is still powering up a few seconds here rather than
+    // mounting it later. Costs nothing when the first attempt works.
+    // Bounded by time, not attempts: one failed init can itself take a while.
+    constexpr uint32_t BootMountWindowMs = 3000;
+    const uint32_t started = millis();
+    cardReady = mountCard();
+    while (!cardReady && millis() - started < BootMountWindowMs) {
+      delay(250);
+      cardReady = mountCard();
+    }
+  }
+  remountsLeft = (pinPresent && !cardReady) ? RemountAttempts : 0;
+  pinChangedAt = lastPollAt = lastMountAttemptAt = millis();
   return cardReady;
 }
 
@@ -53,15 +77,25 @@ bool serviceCardDetect() {
     pinChangedAt = now;
     return false;
   }
-  if (present == actedPresent || now - pinChangedAt < DetectSettleMs) return false;
+  if (present == actedPresent) {
+    if (!present || cardReady || !remountsLeft || now - lastMountAttemptAt < RemountPeriodMs) return false;
+    --remountsLeft;
+    lastMountAttemptAt = now;
+    cardReady = mountCard();
+    return cardReady;
+  }
+  if (now - pinChangedAt < DetectSettleMs) return false;
 
-  // Act once per settled change, so a card that fails to mount is not retried on
-  // every poll; re-inserting it tries again.
+  // Act once per settled change; a card that fails to mount gets the limited
+  // retries above, and re-inserting it starts them again.
   actedPresent = present;
   const bool wasReady = cardReady;
   if (present) {
     cardReady = mountCard();
+    remountsLeft = cardReady ? 0 : RemountAttempts;
+    lastMountAttemptAt = now;
   } else {
+    remountsLeft = 0;
     cardReady = false;
     SD.end(false);
   }
